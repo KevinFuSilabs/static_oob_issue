@@ -85,7 +85,9 @@ void mesh_native_bgapi_init(void);
 bool mesh_bgapi_listener(struct gecko_cmd_packet *evt);
 
 const uint8_t static_oob_data[16] = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16};
-
+const uint8_t auth[20] = {
+          // value bytes here
+         0x42, 0xd2, 0xe1, 0x92, 0x03, 0x07, 0x1a, 0x38, 0xde, 0x9c, 0x28, 0x38, 0x19, 0xa1, 0x9a, 0xd4, 0xcc, 0x19, 0xc6, 0x80};
 int main()
 {
   // Initialize device
@@ -129,18 +131,24 @@ static void handle_gecko_event(uint32_t evt_id, struct gecko_cmd_packet *evt)
     	LOGW("Factory reset started.\r\n");
     	gecko_cmd_flash_ps_erase_all();
     	LOGW("Factory reset done.\r\n");
+
+    	if(gecko_cmd_flash_ps_save(0x1700, 20, auth)->result)
+    		LOGE("Write Auth Error.\r\n");
+    	else
+    		LOGD("Write Auth Success.\r\n");
+
     	if(gecko_cmd_mesh_node_init_oob(0, 2, 0, 0, 0, 0, 0)->result)
     		LOGE("Init OOB Error.\r\n");
     	else
     		LOGD("Init OOB Success.\r\n");
       break;
 
-    case gecko_evt_mesh_node_static_oob_request_id:
-    	if(gecko_cmd_mesh_node_static_oob_request_rsp(16, static_oob_data)->result)
-    		LOGE("Rsp OOB Data Error.\r\n");
-    	 else
-    	    LOGD("Rsp OOB Data Success.\r\n");
-    	break;
+//    case gecko_evt_mesh_node_static_oob_request_id:
+//    	if(gecko_cmd_mesh_node_static_oob_request_rsp(16, static_oob_data)->result)
+//    		LOGE("Rsp OOB Data Error.\r\n");
+//    	 else
+//    	    LOGD("Rsp OOB Data Success.\r\n");
+//    	break;
 
     case gecko_evt_mesh_node_initialized_id:
     	LOGD("Started Unprov Beancons.\r\n");
