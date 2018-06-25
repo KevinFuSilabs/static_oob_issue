@@ -85,9 +85,7 @@ void mesh_native_bgapi_init(void);
 bool mesh_bgapi_listener(struct gecko_cmd_packet *evt);
 
 const uint8_t static_oob_data[16] = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16};
-const uint8_t auth[20] = {
-          // value bytes here
-         0x42, 0xd2, 0xe1, 0x92, 0x03, 0x07, 0x1a, 0x38, 0xde, 0x9c, 0x28, 0x38, 0x19, 0xa1, 0x9a, 0xd4, 0xcc, 0x19, 0xc6, 0x80};
+
 int main()
 {
   // Initialize device
@@ -113,7 +111,7 @@ int main()
   gecko_initCoexHAL();
 
   INIT_LOG();
-    LOGI(RTT_CTRL_CLEAR"--------- Compiled - %s - %s ---------\r\n", (uint32_t)__DATE__, (uint32_t)__TIME__);
+  LOGI(RTT_CTRL_CLEAR"--------- Compiled - %s - %s ---------\r\n", (uint32_t)__DATE__, (uint32_t)__TIME__);
 
   while (1) {
     struct gecko_cmd_packet *evt = gecko_wait_event();
@@ -131,41 +129,73 @@ static void handle_gecko_event(uint32_t evt_id, struct gecko_cmd_packet *evt)
     	LOGW("Factory reset started.\r\n");
     	gecko_cmd_flash_ps_erase_all();
     	LOGW("Factory reset done.\r\n");
-
-    	if(gecko_cmd_flash_ps_save(0x1700, 20, auth)->result)
-    		LOGE("Write Auth Error.\r\n");
+    	if(gecko_cmd_mesh_prov_init()->result)
+    		LOGE("Init Prov Error.\r\n");
     	else
-    		LOGD("Write Auth Success.\r\n");
-
-    	if(gecko_cmd_mesh_node_init_oob(0, 2, 0, 0, 0, 0, 0)->result)
-    		LOGE("Init OOB Error.\r\n");
-    	else
-    		LOGD("Init OOB Success.\r\n");
+    		LOGD("Init Prov Success.\r\n");
       break;
 
-//    case gecko_evt_mesh_node_static_oob_request_id:
-//    	if(gecko_cmd_mesh_node_static_oob_request_rsp(16, static_oob_data)->result)
-//    		LOGE("Rsp OOB Data Error.\r\n");
-//    	 else
-//    	    LOGD("Rsp OOB Data Success.\r\n");
-//    	break;
+    case gecko_evt_mesh_prov_initialized_id:
+    	if(gecko_cmd_mesh_prov_set_oob_requirements(0,2,0,0,0,0)->result)
+    		LOGE("Set OOB requirements Error.\r\n");
+    	else
+    	    LOGD("Set OOB requirements Success.\r\n");
 
-    case gecko_evt_mesh_node_initialized_id:
-    	LOGD("Started Unprov Beancons.\r\n");
-      // The Node is now initialized, start unprovisioned Beaconing using PB-Adv Bearer
-      gecko_cmd_mesh_node_start_unprov_beaconing(0x1);
+    	if(gecko_cmd_mesh_prov_scan_unprov_beacons()->result)
+    		LOGE("Scan unprov beacons Error.\r\n");
+    	else
+    		LOGD("Scan unprov beacons Success.\r\n");
+    	break;
+
+    case gecko_evt_mesh_prov_oob_auth_request_id:
+    	if (gecko_cmd_mesh_prov_oob_auth_rsp(16, static_oob_data)->result)
+    		LOGE("ERROR responding to oob request\r\n");
+    	else
+    		LOGD("Responding to oob request success.\r\n");
+    	break;
+
+    case gecko_evt_mesh_prov_unprov_beacon_id: {
+    	struct gecko_msg_mesh_prov_unprov_beacon_evt_t *beacon_evt = (struct gecko_msg_mesh_prov_unprov_beacon_evt_t *) &(evt->data);
+    	if (beacon_evt->uuid.data[11] == 0xE6) {
+    		LOGD("gecko_evt_mesh_prov_unprov_beacon_id-> Provision start...\r\n");
+    		uint8_t netkey_id = gecko_cmd_mesh_prov_create_network(0, (const uint8 *) "")->network_id;
+
+    		struct gecko_msg_mesh_prov_provision_device_rsp_t *prov_resp_adv;
+    		prov_resp_adv = gecko_cmd_mesh_prov_provision_device(netkey_id, 16, beacon_evt->uuid.data);
+
+    		if (prov_resp_adv->result == 0) {
+    			LOGD("Successful call of gecko_cmd_mesh_prov_provision_device\r\n");
+    		} else {
+    			LOGD("Failed call to provision node. %x\r\n", prov_resp_adv->result);
+    		}
+    	}
+    	break;
+    }
+
+	case gecko_evt_mesh_prov_provisioning_failed_id: {
+		struct gecko_msg_mesh_prov_provisioning_failed_evt_t *fail_evt = (struct gecko_msg_mesh_prov_provisioning_failed_evt_t*) &(evt->data);
+		LOGE("Provisioning failed. Reason: %x\r\n", fail_evt->reason);
+		break;
+	}
+
+	case gecko_evt_mesh_prov_device_provisioned_id:
+		LOGI("Node successfully provisioned.\r\n");
+	break;
+
+    case gecko_evt_gatt_server_user_write_request_id:
+      if (evt->data.evt_gatt_server_user_write_request.characteristic == gattdb_ota_control) {
+        /* Set flag to enter to OTA mode */
+        boot_to_dfu = 1;
+        /* Send response to Write Request */
+        gecko_cmd_gatt_server_send_user_write_response(
+          evt->data.evt_gatt_server_user_write_request.connection,
+          gattdb_ota_control,
+          bg_err_success);
+
+        /* Close connection to enter to DFU OTA mode */
+        gecko_cmd_le_connection_close(evt->data.evt_gatt_server_user_write_request.connection);
+      }
       break;
-
-    case gecko_evt_mesh_node_provisioned_id:
-    	LOGI("Provisioned.\r\n");
-    	break;
-    case gecko_evt_mesh_node_provisioning_failed_id:
-    	LOGE("Provisioning failed. Reason = 0x%04X\r\n", evt->data.evt_mesh_node_provisioning_failed.result);
-    	break;
-    case gecko_evt_mesh_node_provisioning_started_id:
-    	LOGI("Provisioning started.\r\n");
-    	break;
-
     default:
       break;
   }
